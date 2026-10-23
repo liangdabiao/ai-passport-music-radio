@@ -1,6 +1,6 @@
-// main/nr_wifi.cc —— 见 nr_wifi.h。esp-wifi-connect 组件的 C 封装。
+// main/mr_wifi.cc —— 见 mr_wifi.h。esp-wifi-connect 组件的 C 封装。
 // 全部 C++ 细节（WifiManager 单例、事件回调、配网热点）住在这里。
-#include "nr_wifi.h"
+#include "mr_wifi.h"
 
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -13,17 +13,17 @@ static const char *TAG = "sq_wifi";
 static void (*s_on_connected)(void);
 static void (*s_on_disconnected)(void);
 
-void nr_wifi_start(void (*on_connected)(void), void (*on_disconnected)(void))
+void mr_wifi_start(void (*on_connected)(void), void (*on_disconnected)(void))
 {
     s_on_connected = on_connected;
     s_on_disconnected = on_disconnected;
 
     auto &wifi = WifiManager::GetInstance();
     WifiManagerConfig config;
-    config.ssid_prefix = "NetRadio";
-    config.fixed_ap_ssid = "AStock";
+    config.ssid_prefix = "MusicRadio";
+    config.fixed_ap_ssid = "MusicRadio";
     config.language = "zh-CN";
-    config.station_hostname = "net-radio";
+    config.station_hostname = "music-radio";
     // english-dict 同款：STA 断线重扫节流。
     config.station_scan_min_interval_seconds = 5;
     config.station_scan_max_interval_seconds = 30;
@@ -67,12 +67,12 @@ void nr_wifi_start(void (*on_connected)(void), void (*on_disconnected)(void))
     }
 }
 
-void nr_wifi_open_config_ap(void)
+void mr_wifi_open_config_ap(void)
 {
     WifiManager::GetInstance().StartConfigAp();
 }
 
-void nr_wifi_reset_credentials(void)
+void mr_wifi_reset_credentials(void)
 {
     auto &ssid_manager = SsidManager::GetInstance();
     auto list = ssid_manager.GetSsidList();
@@ -82,12 +82,12 @@ void nr_wifi_reset_credentials(void)
     WifiManager::GetInstance().StartConfigAp();
 }
 
-bool nr_wifi_is_connected(void)
+bool mr_wifi_is_connected(void)
 {
     return WifiManager::GetInstance().IsConnected();
 }
 
-void nr_wifi_ensure_dns(void)
+void mr_wifi_ensure_dns(void)
 {
     // hot-daily 真机教训：DHCP 拿到的 DNS 会让首次 HTTP 请求超时。
     // 显式把主 DNS 设为网关、备用设为公共 DNS，双保险。

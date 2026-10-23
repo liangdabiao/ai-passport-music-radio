@@ -1,4 +1,4 @@
-// main/nr_player.c —— 见 nr_player.h。
+// main/mr_player.c —— 见 mr_player.h。
 //
 // 内存预算（C3 无 PSRAM，全部内部 RAM）：环形缓冲 24KB + helix 解码器状态
 // ~20KB（MP3InitDecoder 内部 malloc）+ 任务栈 16KB。换台只换 URL，缓冲与
@@ -9,8 +9,8 @@
 // PCM 帧缓冲是文件级静态区，不占任务栈。
 //
 // 格式契约：本模块在出声时独占 codec（采样率按流设置）；停播后 codec 保留
-// 流格式，nr_sfx 出声前必须先恢复 16kHz（见 nr_sfx.c）。
-#include "nr_player.h"
+// 流格式，mr_sfx 出声前必须先恢复 16kHz（见 mr_sfx.c）。
+#include "mr_player.h"
 
 #include <errno.h>
 #include <netdb.h>
@@ -31,11 +31,11 @@
 #include "bsp_audio.h"
 
 #include "mp3dec.h"
-#include "nr_http.h"
-#include "nr_station.h"
-#include "nr_volume.h"
+#include "mr_http.h"
+#include "mr_station.h"
+#include "mr_volume.h"
 
-static const char *TAG = "nr_player";
+static const char *TAG = "mr_player";
 
 #define PLAYER_TASK_STACK 10240
 #define PLAYER_TASK_PRIO  6  // 高于 LVGL(4)/输入(5)：解码不能被 UI 挤掉
@@ -44,7 +44,7 @@ static const char *TAG = "nr_player";
 #define START_MARK   (6 * 1024)  // 攒到这个水位才开始解码（≈0.75s@64kbps）
 #define LOW_WATER    (2 * 1024)  // 解码停点：留一帧余量就回去收流
 #define DECODE_PER_LOOP 4        // 每轮最多解几帧（频繁回来续 DMA，防欠载）
-#define NR_GAIN_MASTER  3        // 100% 档位的数字增益倍数（补偿 codec 音量曲线）
+#define MR_GAIN_MASTER  3        // 100% 档位的数字增益倍数（补偿 codec 音量曲线）
 #define RECV_MS      20          // 单次 recv 超时：短到不拦住 DMA 喂数
 #define STAGING_SIZE 2048        // 解码线性暂存（≥2×最大帧 1052B，容回绕）
 #define HEAD_MAX     2048        // 响应头上限
@@ -69,7 +69,7 @@ typedef enum {
 } session_end_t;
 
 typedef struct {
-    nr_play_status_t st;      // 快照区（lock 保护）
+    mr_play_status_t st;      // 快照区（lock 保护）
     SemaphoreHandle_t lock;
 
     TaskHandle_t task;
@@ -90,13 +90,13 @@ typedef struct {
 static player_t P;
 static int16_t s_pcm[1152 * 2]; // 一帧 PCM 上限（1152 样本 × 2 声道）
 static uint8_t s_staging[STAGING_SIZE];
-static uint8_t s_level = NR_VOLUME_DEFAULT; // 用户音量档（播放器侧副本）
+static uint8_t s_level = MR_VOLUME_DEFAULT; // 用户音量档（播放器侧副本）
 static uint8_t s_applied_codec_vol;      // 已下发的 codec 音量（0 = 需重下发）
 
-static uint8_t nr_level_get(void) { return s_level; }
+static uint8_t mr_level_get(void) { return s_level; }
 
 // ---------------------------------------------------------------- 快照 ----
-static void publish(const nr_play_state_t state, const char *msg)
+static void publish(const mr_play_state_t state, const char *msg)
 {
     xSemaphoreTake(P.lock, portMAX_DELAY);
     P.st.state = state;
@@ -107,7 +107,7 @@ static void publish(const nr_play_state_t state, const char *msg)
 static void publish_retry(const unsigned attempt, const unsigned total)
 {
     xSemaphoreTake(P.lock, portMAX_DELAY);
-    P.st.state = NR_PLAY_CONNECT;
+    P.st.state = MR_PLAY_CONNECT;
     snprintf(P.st.msg, sizeof(P.st.msg), "重连 %u/%u…", attempt, total);
     xSemaphoreGive(P.lock);
 }
@@ -154,13 +154,13 @@ static void ring_drop(size_t n)
 // 腾出空间再来（真机教训：旧实现把读进来的尾巴悄悄丢掉，流被截断后解码器
 // 读到假帧，表现为速度漂移、丝丝声、频繁断流重连）。
 static size_t ring_push_some(const uint8_t *data, const size_t len,
-                             const bool chunked, nr_chunker_t *ck,
+                             const bool chunked, mr_chunker_t *ck,
                              bool *bad)
 {
     *bad = false;
     size_t used = 0;
     while (used < len) {
-        if (chunked && (ck->state == NR_CK_DONE || ck->state == NR_CK_BAD)) break;
+        if (chunked && (ck->state == MR_CK_DONE || ck->state == MR_CK_BAD)) break;
         const size_t space = ring_space();
         if (space == 0) break;
         uint8_t *out = P.ring + P.ring_w;
@@ -171,13 +171,13 @@ static size_t ring_push_some(const uint8_t *data, const size_t len,
             const uint8_t *inp = data + used;
             size_t inlen = len - used;
             const size_t cap_before = cap;
-            nr_chunker_feed(ck, &inp, &inlen, out, &cap);
+            mr_chunker_feed(ck, &inp, &inlen, out, &cap);
             const size_t consumed = (len - used) - inlen;
             const size_t produced = cap_before - cap;
             P.ring_w = (P.ring_w + produced) % RING_SIZE;
             P.ring_used += produced;
             used += consumed;
-            if (ck->state == NR_CK_BAD) {
+            if (ck->state == MR_CK_BAD) {
                 *bad = true;
                 break;
             }
@@ -300,12 +300,12 @@ static int fetch_head(const char *host, const int port, const char *path,
         if (n == 0) { free(buf); return -1; }
         have += (size_t)n;
 
-        const size_t head_len = nr_http_head_scan(buf, have, HEAD_MAX);
+        const size_t head_len = mr_http_head_scan(buf, have, HEAD_MAX);
         if (head_len == 0) continue;
         if (head_len == SIZE_MAX) { free(buf); return -1; }
 
-        nr_http_head_t head;
-        if (!nr_http_head_parse(buf, head_len, &head)) { free(buf); return -1; }
+        mr_http_head_t head;
+        if (!mr_http_head_parse(buf, head_len, &head)) { free(buf); return -1; }
         if (head.status < 200) { // 1xx：丢弃，找真正的响应头
             memmove(buf, buf + head_len, have - head_len);
             have -= head_len;
@@ -335,7 +335,7 @@ static int fetch_head(const char *host, const int port, const char *path,
 
 // 泵送式收流：先把残留字节塞进环形缓冲，塞完再读新块；环满就带着残留返回，
 // 让调用方解码腾出空间后再来。返回 false = 断流/坏流。
-static bool fill_ring(const int sock, const bool chunked, nr_chunker_t *ck,
+static bool fill_ring(const int sock, const bool chunked, mr_chunker_t *ck,
                       int64_t *last_data_ms)
 {
     for (int i = 0; i < READ_BURST; i++) {
@@ -429,7 +429,7 @@ static int decode_write(void)
         s_applied_codec_vol = 0; // 重新打开的 codec 需要重新下发音量
         ESP_LOGI(TAG, "流格式: %uHz %uch %ukbps 音量=%u%% free=%u largest=%u",
                  fi.samprate, fi.nChans, fi.bitrate / 1000,
-                 (unsigned)nr_level_get(),
+                 (unsigned)mr_level_get(),
                  (unsigned)esp_get_free_heap_size(),
                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     }
@@ -449,7 +449,7 @@ static int decode_write(void)
     }
     // Q8 定点：gain_q8 = 档位/100 × MASTER × 256。整数百分比会把它算成 1/100
     // （真机踩过：60% × 3 / 100 = 1，声音被压小 100 倍）。
-    const int32_t gain_q8 = (int32_t)nr_level_get() * NR_GAIN_MASTER * 256 / 100;
+    const int32_t gain_q8 = (int32_t)mr_level_get() * MR_GAIN_MASTER * 256 / 100;
     if (gain_q8 != 256) {
         for (int i = 0; i < out_samples; i++) {
             int32_t v = ((int32_t)s_pcm[i] * gain_q8) >> 8;
@@ -525,17 +525,17 @@ static session_end_t play_one(const char *url, const uint32_t my_serial,
         return SESS_REDIRECT;
     }
 
-    nr_http_head_t h;
-    nr_http_head_parse(head, head_len, &h);
+    mr_http_head_t h;
+    mr_http_head_parse(head, head_len, &h);
     free(head);
     ESP_LOGI(TAG, "已连上: %s (%s)", h.content_type, h.icy_name);
-    publish(NR_PLAY_BUFFERING, MSG_BUFFERING);
+    publish(MR_PLAY_BUFFERING, MSG_BUFFERING);
 
     ring_reset();
     pending_reset();
     P.format_set = false; // 新会话重新按流设置 codec（sfx 可能动过格式）
-    nr_chunker_t ck;
-    nr_chunker_init(&ck);
+    mr_chunker_t ck;
+    mr_chunker_init(&ck);
     if (body) {
         bool bad = false;
         const size_t used = ring_push_some((const uint8_t *)body, body_len,
@@ -576,7 +576,7 @@ static session_end_t play_one(const char *url, const uint32_t my_serial,
 
         if (!playing && P.ring_used >= START_MARK) {
             playing = true;
-            publish(NR_PLAY_PLAYING, MSG_PLAYING);
+            publish(MR_PLAY_PLAYING, MSG_PLAYING);
         }
         if (playing) {
             // 解到低水位（剩一帧的空间）再回去收流：环形缓冲长期保持低位，
@@ -644,7 +644,7 @@ static session_end_t play_one(const char *url, const uint32_t my_serial,
 static void play_station(const uint8_t station)
 {
     char url[192];
-    snprintf(url, sizeof(url), "%s", NR_STATIONS[station].url);
+    snprintf(url, sizeof(url), "%s", MR_STATIONS[station].url);
     const uint32_t my_serial = P.serial; // 本次播放的请求代号
     unsigned retry = 0;
     unsigned redirect = 0;
@@ -658,7 +658,7 @@ static void play_station(const uint8_t station)
         if (end == SESS_REQUEST) return; // 新请求/停止：移交控制权
         if (end == SESS_REDIRECT) {
             if (++redirect > REDIRECT_MAX) {
-                publish(NR_PLAY_ERROR, MSG_UNREACH);
+                publish(MR_PLAY_ERROR, MSG_UNREACH);
                 return;
             }
             snprintf(url, sizeof(url), "%s", location);
@@ -667,7 +667,7 @@ static void play_station(const uint8_t station)
         }
         ESP_LOGW(TAG, "会话结束: %s（第 %u 次失败）", msg, retry + 1);
         if (++retry > RETRY_MAX) {
-            publish(NR_PLAY_ERROR, msg);
+            publish(MR_PLAY_ERROR, msg);
             return;
         }
         publish_retry(retry, RETRY_MAX);
@@ -681,7 +681,7 @@ static void player_task(void *arg)
     (void)arg;
     for (;;) {
         if (!P.req_valid) {
-            if (P.st.state != NR_PLAY_IDLE) publish(NR_PLAY_IDLE, NULL);
+            if (P.st.state != MR_PLAY_IDLE) publish(MR_PLAY_IDLE, NULL);
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
@@ -705,7 +705,7 @@ static void player_task(void *arg)
 }
 
 // ---------------------------------------------------------------- 对外 ----
-void nr_player_start(void)
+void mr_player_start(void)
 {
     if (P.task) return;
     P.lock = xSemaphoreCreateMutex();
@@ -735,7 +735,7 @@ void nr_player_start(void)
              (unsigned)esp_get_free_heap_size(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     P.dec_open = true;
-    if (xTaskCreate(player_task, "nr_play", PLAYER_TASK_STACK, NULL,
+    if (xTaskCreate(player_task, "mr_play", PLAYER_TASK_STACK, NULL,
                     PLAYER_TASK_PRIO, &P.task) != pdPASS) {
         ESP_LOGE(TAG, "播放任务创建失败");
         MP3FreeDecoder(P.dec);
@@ -747,32 +747,32 @@ void nr_player_start(void)
     }
 }
 
-void nr_player_play(const uint8_t station_index)
+void mr_player_play(const uint8_t station_index)
 {
-    if (!P.task || !nr_station_valid(station_index)) return;
+    if (!P.task || !mr_station_valid(station_index)) return;
     P.req_station = station_index;
     P.req_valid = true;
     P.serial++;
 }
 
-void nr_player_stop(void)
+void mr_player_stop(void)
 {
     if (!P.task) return;
     P.req_valid = false;
     P.serial++;
 }
 
-bool nr_player_is_streaming(void)
+bool mr_player_is_streaming(void)
 {
     if (!P.lock) return false;
     xSemaphoreTake(P.lock, portMAX_DELAY);
-    const nr_play_state_t state = P.st.state;
+    const mr_play_state_t state = P.st.state;
     xSemaphoreGive(P.lock);
-    return state == NR_PLAY_CONNECT || state == NR_PLAY_BUFFERING ||
-           state == NR_PLAY_PLAYING;
+    return state == MR_PLAY_CONNECT || state == MR_PLAY_BUFFERING ||
+           state == MR_PLAY_PLAYING;
 }
 
-void nr_player_status(nr_play_status_t *out)
+void mr_player_status(mr_play_status_t *out)
 {
     if (!out) return;
     if (!P.lock) {
@@ -784,8 +784,8 @@ void nr_player_status(nr_play_status_t *out)
     xSemaphoreGive(P.lock);
 }
 
-void nr_player_set_volume(const uint8_t level)
+void mr_player_set_volume(const uint8_t level)
 {
     s_level = level;
-    bsp_audio_set_volume(nr_volume_scale(NR_VOLUME_BASE_RADIO, level));
+    bsp_audio_set_volume(mr_volume_scale(MR_VOLUME_BASE_RADIO, level));
 }

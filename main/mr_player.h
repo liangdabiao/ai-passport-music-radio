@@ -1,4 +1,4 @@
-// main/nr_player.h —— 网络电台流媒体播放任务。
+// main/mr_player.h —— 音乐电台流媒体播放任务。
 //
 // 架构（单任务，天然免锁）：
 //   raw-socket HTTP GET（hot-daily 真机教训：esp_http_client 在 C3+lwip 上
@@ -7,44 +7,44 @@
 //   阻塞写出 —— I2S 的反压就是解码的节拍器，天然按实时走。
 //
 // 一次只有一路流：play() 换台 = 停旧连新；协议细节（重定向、100-continue、
-// chunked）在 nr_http 纯逻辑层，本模块只做设备端粘合。
+// chunked）在 mr_http 纯逻辑层，本模块只做设备端粘合。
 #pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
 
 typedef enum {
-    NR_PLAY_IDLE = 0,  // 未播放
-    NR_PLAY_CONNECT,   // 连接/握手中
-    NR_PLAY_BUFFERING, // 已连上，攒缓冲
-    NR_PLAY_PLAYING,   // 播放中
-    NR_PLAY_ERROR,     // 失败（msg 有中文短句，UI 直接显示）
-} nr_play_state_t;
+    MR_PLAY_IDLE = 0,  // 未播放
+    MR_PLAY_CONNECT,   // 连接/握手中
+    MR_PLAY_BUFFERING, // 已连上，攒缓冲
+    MR_PLAY_PLAYING,   // 播放中
+    MR_PLAY_ERROR,     // 失败（msg 有中文短句，UI 直接显示）
+} mr_play_state_t;
 
 typedef struct {
-    nr_play_state_t state;
+    mr_play_state_t state;
     char msg[64];       // 状态短句（连接中… / 重试 2/3 / 电台无响应 等）
     uint8_t station;    // 当前（或最近一次请求的）台
     uint16_t kbps;      // 码率：icy-br 优先，否则帧头推算；0 = 未知
     uint32_t sample_hz; // 解码出的采样率；0 = 未知
     uint8_t channels;   // 1/2；0 = 未知
-} nr_play_status_t;
+} mr_play_status_t;
 
 // 创建播放任务（幂等）。app 启动时调用一次。
-void nr_player_start(void);
+void mr_player_start(void);
 
 // 请求播放指定台（正在播则先停旧流再连新台 —— 换台同用这一口）。
-void nr_player_play(uint8_t station_index);
+void mr_player_play(uint8_t station_index);
 
 // 请求停止（幂等）。完成后回 IDLE。
-void nr_player_stop(void);
+void mr_player_stop(void);
 
 // 是否正在出声（CONNECT/BUFFERING/PLAYING）。音效门用它让路。
-bool nr_player_is_streaming(void);
+bool mr_player_is_streaming(void);
 
 // 状态快照（内部互斥，UI 的 LVGL 定时器里随便调）。
-void nr_player_status(nr_play_status_t *out);
+void mr_player_status(mr_play_status_t *out);
 
 // 应用音量档位（0..100 用户档）到编解码器。播放中与待机时都可调；
 // 音效模块共用这个全局 codec 音量（各自在出声前重设自己的基准）。
-void nr_player_set_volume(uint8_t level);
+void mr_player_set_volume(uint8_t level);

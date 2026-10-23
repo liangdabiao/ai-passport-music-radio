@@ -11,9 +11,9 @@
 | 文件 | 是什么 | 来源 |
 | --- | --- | --- |
 | [`fonts/charset.txt`](fonts/charset.txt) | 推导出来的字符清单：一段注释头 + 全部码点 | `tools/astock-quote/gen_font.py` 生成；请勿手改 |
-| [`fonts/nr_font_16.c`](fonts/nr_font_16.c) | 16px LVGL 字库子集 | 生成物；Noto Sans CJK SC，SIL OFL 1.1 |
-| [`fonts/nr_font_24.c`](fonts/nr_font_24.c) | 24px LVGL 字库子集 | 生成物；Noto Sans CJK SC，SIL OFL 1.1 |
-| [`fonts/nr_font_32.c`](fonts/nr_font_32.c) | 32px LVGL 字库子集 | 生成物；Noto Sans CJK SC，SIL OFL 1.1 |
+| [`fonts/mr_font_16.c`](fonts/mr_font_16.c) | 16px LVGL 字库子集 | 生成物；Noto Sans CJK SC，SIL OFL 1.1 |
+| [`fonts/mr_font_24.c`](fonts/mr_font_24.c) | 24px LVGL 字库子集 | 生成物；Noto Sans CJK SC，SIL OFL 1.1 |
+| [`fonts/mr_font_32.c`](fonts/mr_font_32.c) | 32px LVGL 字库子集 | 生成物；Noto Sans CJK SC，SIL OFL 1.1 |
 
 ## 清单怎么来的
 

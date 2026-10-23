@@ -1,5 +1,5 @@
-// main/nr_http.c —— 见 nr_http.h。
-#include "nr_http.h"
+// main/mr_http.c —— 见 mr_http.h。
+#include "mr_http.h"
 
 #include <stdlib.h>
 #include <strings.h>
@@ -7,7 +7,7 @@
 #include <ctype.h>
 #include <string.h>
 
-size_t nr_http_head_scan(const char *buf, const size_t have, const size_t cap)
+size_t mr_http_head_scan(const char *buf, const size_t have, const size_t cap)
 {
     if (!buf) return 0;
     // 头部终点是 "\r\n\r\n"。真头部远小于上限；超过还找不到 = 流损坏。
@@ -65,7 +65,7 @@ static bool copy_header(const char *head, size_t len, const char *name,
     return true;
 }
 
-bool nr_http_head_parse(const char *head, const size_t len, nr_http_head_t *out)
+bool mr_http_head_parse(const char *head, const size_t len, mr_http_head_t *out)
 {
     if (!head || len < 12 || !out) return false;
     memset(out, 0, sizeof(*out));
@@ -112,9 +112,9 @@ bool nr_http_head_parse(const char *head, const size_t len, nr_http_head_t *out)
 //   TRAILER --滚动窗口扫到 "\r\n\r\n"--> DONE（不再消费）
 //   任何状态收到非法字节 --> BAD
 
-void nr_chunker_init(nr_chunker_t *c)
+void mr_chunker_init(mr_chunker_t *c)
 {
-    c->state = NR_CK_SIZE;
+    c->state = MR_CK_SIZE;
     c->remain = 0;
     c->size_acc = 0;
     c->size_digits = 0;
@@ -129,41 +129,41 @@ static int hexval(const uint8_t ch)
     return -1;
 }
 
-void nr_chunker_feed(nr_chunker_t *c, const uint8_t **in, size_t *n,
+void mr_chunker_feed(mr_chunker_t *c, const uint8_t **in, size_t *n,
                      uint8_t *out, size_t *cap)
 {
     while (*n > 0 && *cap > 0) {
         const uint8_t ch = **in;
         switch (c->state) {
-            case NR_CK_SIZE: {
+            case MR_CK_SIZE: {
                 const int hv = hexval(ch);
                 if (hv >= 0) {
-                    if (++c->size_digits > 8) { c->state = NR_CK_BAD; return; }
+                    if (++c->size_digits > 8) { c->state = MR_CK_BAD; return; }
                     c->size_acc = c->size_acc * 16u + (uint64_t)hv;
                     (*in)++; (*n)--;
                 } else if (ch == '\r') {
-                    if (c->size_digits == 0) { c->state = NR_CK_BAD; return; }
-                    c->state = NR_CK_SIZE_LF;
+                    if (c->size_digits == 0) { c->state = MR_CK_BAD; return; }
+                    c->state = MR_CK_SIZE_LF;
                     (*in)++; (*n)--;
                 } else {
-                    c->state = NR_CK_BAD; // 含 ';'：chunk 扩展不支持
+                    c->state = MR_CK_BAD; // 含 ';'：chunk 扩展不支持
                     return;
                 }
                 break;
             }
-            case NR_CK_SIZE_LF:
-                if (ch != '\n') { c->state = NR_CK_BAD; return; }
+            case MR_CK_SIZE_LF:
+                if (ch != '\n') { c->state = MR_CK_BAD; return; }
                 (*in)++; (*n)--;
                 if (c->size_acc == 0) {
-                    c->state = NR_CK_TRAILER;
+                    c->state = MR_CK_TRAILER;
                 } else {
                     c->remain = (size_t)c->size_acc;
                     c->size_acc = 0;
                     c->size_digits = 0;
-                    c->state = NR_CK_DATA;
+                    c->state = MR_CK_DATA;
                 }
                 break;
-            case NR_CK_DATA: {
+            case MR_CK_DATA: {
                 const size_t move = c->remain < *n ? c->remain : *n;
                 const size_t room = *cap < move ? *cap : move;
                 if (room > 0) {
@@ -177,40 +177,40 @@ void nr_chunker_feed(nr_chunker_t *c, const uint8_t **in, size_t *n,
                 if (c->remain == 0 && room == move) {
                     // 数据段消费完（输出满时 room<move，留到下轮）。
                     if (*n > 0) {
-                        if (**in != '\r') { c->state = NR_CK_BAD; return; }
+                        if (**in != '\r') { c->state = MR_CK_BAD; return; }
                         (*in)++; (*n)--;
-                        c->state = NR_CK_DATA_LF;
+                        c->state = MR_CK_DATA_LF;
                     } else {
-                        c->state = NR_CK_DATA_CR; // 输入耗尽，等下一批的 '\r'
+                        c->state = MR_CK_DATA_CR; // 输入耗尽，等下一批的 '\r'
                     }
                 }
                 break;
             }
-            case NR_CK_DATA_CR:
+            case MR_CK_DATA_CR:
                 // 数据段刚消费完，等 '\r'。
-                if (ch != '\r') { c->state = NR_CK_BAD; return; }
+                if (ch != '\r') { c->state = MR_CK_BAD; return; }
                 (*in)++; (*n)--;
-                c->state = NR_CK_DATA_LF;
+                c->state = MR_CK_DATA_LF;
                 break;
-            case NR_CK_DATA_LF:
+            case MR_CK_DATA_LF:
                 // DATA_CR 的镜像：'\r' 已收，等 '\n'。
-                if (ch != '\n') { c->state = NR_CK_BAD; return; }
+                if (ch != '\n') { c->state = MR_CK_BAD; return; }
                 (*in)++; (*n)--;
-                c->state = NR_CK_SIZE;
+                c->state = MR_CK_SIZE;
                 break;
-            case NR_CK_TRAILER: {
+            case MR_CK_TRAILER: {
                 // 滚动 4 字节窗口，扫到 "\r\n\r\n" 即尾注结束。
                 c->window = (c->window << 8) | ch;
                 (*in)++; (*n)--;
                 if ((c->window & 0xffffffffULL) == 0x0d0a0d0aULL) {
-                    c->state = NR_CK_DONE;
+                    c->state = MR_CK_DONE;
                     return;
                 }
                 break;
             }
-            case NR_CK_DONE:
+            case MR_CK_DONE:
                 return; // 不再消费：调用方随后关闭连接
-            case NR_CK_BAD:
+            case MR_CK_BAD:
                 return;
         }
     }

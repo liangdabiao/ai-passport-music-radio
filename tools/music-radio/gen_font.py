@@ -15,9 +15,9 @@
 母字体：Noto Sans CJK SC Regular（SIL Open Font License 1.1）。
 
 用法（在仓库根目录）：
-    python3 tools/net-radio/gen_font.py            # 生成三档字库
-    python3 tools/net-radio/gen_font.py --check    # 只核对清单与母字体覆盖，不转换
-    python3 tools/net-radio/gen_font.py --download # 先下载母字体
+    python3 tools/music-radio/gen_font.py            # 生成三档字库
+    python3 tools/music-radio/gen_font.py --check    # 只核对清单与母字体覆盖，不转换
+    python3 tools/music-radio/gen_font.py --download # 先下载母字体
 
 环境变量覆盖：
     SB_SOURCE_FONT   母字体 OTF 路径
@@ -194,8 +194,8 @@ def describe(chars: list[str]) -> str:
     cjk = [c for c in chars if 0x4E00 <= ord(c) <= 0x9FFF]
     others = [c for c in chars if not (0x4E00 <= ord(c) <= 0x9FFF)]
     lines = [
-        "# 网络电台（net-radio）的字符清单。",
-        "# 由 tools/net-radio/gen_font.py 生成，请勿手改。",
+        "# 音乐电台（music-radio）的字符清单。",
+        "# 由 tools/music-radio/gen_font.py 生成，请勿手改。",
         f"# 母字体：{SOURCE_FONT_NAME}（{SOURCE_FONT_LICENSE}）",
         f"# 码点总数：{len(chars)}（汉字 {len(cjk)}，其它 {len(others)}）",
         "",
@@ -264,7 +264,7 @@ def run_converter(command: list[str], source_font: Path, symbols: str, size: int
         "--format", "lvgl",
         "--no-compress",
         "--lv-include", "lvgl.h",
-        "--lv-font-name", f"nr_font_{size}",
+        "--lv-font-name", f"mr_font_{size}",
         "-o", str(output),
     ]
     result = subprocess.run(args, capture_output=True, text=True)
@@ -318,7 +318,7 @@ def main() -> int:
         if not up_to_date:
             problems.append(f"{CHARSET.relative_to(ROOT)} 与当前源码不一致（清单已过期）")
         for size in SIZES:
-            generated = FONT_DIR / f"nr_font_{size}.c"
+            generated = FONT_DIR / f"mr_font_{size}.c"
             if not generated.is_file():
                 problems.append(f"{generated.relative_to(ROOT)} 不存在")
                 continue
@@ -331,7 +331,7 @@ def main() -> int:
         if problems:
             for item in problems:
                 print(f"FAIL: {item}", file=sys.stderr)
-            print("重跑 tools/net-radio/gen_font.py 生成字库后重试。", file=sys.stderr)
+            print("重跑 tools/music-radio/gen_font.py 生成字库后重试。", file=sys.stderr)
             return 1
         return 0
 
@@ -339,7 +339,7 @@ def main() -> int:
     for size in SIZES:
         symbols = "".join(full_chars if size == 16 else ui_chars)
         bpp = 2 if size == 16 else BPP  # 16px 全集用 2bpp 控 Flash（约 1.4MB）
-        output = FONT_DIR / f"nr_font_{size}.c"
+        output = FONT_DIR / f"mr_font_{size}.c"
         run_converter(command, source_font, symbols, size, output, bpp)
         print(f"wrote: {output.relative_to(ROOT)}（{output.stat().st_size} 字节）")
     return 0
